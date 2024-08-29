@@ -1,4 +1,5 @@
 const { Telegraf, Markup } = require("telegraf");
+const axios = require("axios");
 const dotenv = require("dotenv");
 dotenv.config();
 
@@ -10,24 +11,14 @@ client
     .catch((err) => new Error(err));
 
 const editMessages = require("./utils/editMessages");
+const { start } = require("./utils/startCommand");
 
-const token = process.env.BOT_TOKEN;
+const borToken = process.env.BOT_TOKEN;
+const apiToken = process.env.API_TOKEN;
 
-const bot = new Telegraf(token);
+const bot = new Telegraf(borToken);
 
-bot.start(async (ctx) => {
-    //! should remove user data
-
-    ctx.reply(
-        "هوش مصنوعی خودت رو انتخاب کن 🤖",
-        Markup.inlineKeyboard([
-            [
-                Markup.button.callback("Copilot", "copilot"),
-                Markup.button.callback("Chat GPT", "chatgpt"),
-            ],
-        ])
-    );
-});
+bot.start(async (ctx) => await start(ctx, client));
 
 //* COPILOT
 bot.action("copilot", (ctx) => {
@@ -50,56 +41,83 @@ bot.action("creative", (ctx) => {
     const callbackData = ctx.update.callback_query.data;
 
     client.set(`user:${ctx.chat.id}:response`, callbackData);
-    editMessages.howCanIHelp(ctx);
+    editMessages.askYourQuestion(ctx);
 });
 bot.action("precise", (ctx) => {
     const callbackData = ctx.update.callback_query.data;
 
     client.set(`user:${ctx.chat.id}:response`, callbackData);
-    editMessages.howCanIHelp(ctx);
+    editMessages.askYourQuestion(ctx);
 });
 bot.action("balance", (ctx) => {
     const callbackData = ctx.update.callback_query.data;
 
     client.set(`user:${ctx.chat.id}:response`, callbackData);
-    editMessages.howCanIHelp(ctx);
+    editMessages.askYourQuestion(ctx);
 });
 
-//* CHAT GPT
-bot.action("chatgpt", (ctx) => {
-    const callbackData = ctx.update.callback_query.data;
-
-    client.set(`user:${ctx.chat.id}:ai`, callbackData);
-
-    ctx.editMessageText(
-        "ورژنی که میخواهید از آن استفاده کنید رو انتخاب کنید:",
-        Markup.inlineKeyboard([
-            [
-                Markup.button.callback("GPT 3.5", "gpt3.5-turbo"),
-                Markup.button.callback("GPT 4-o", "gpt4o"),
-            ],
-            [Markup.button.callback("GPT 4-turbo", "gpt4-turbo")],
-        ])
-    );
-});
-
-bot.action("gpt3.5-turbo", (ctx) => {
-    const callbackData = ctx.update.callback_query.data;
-
-    client.set(`user:${ctx.chat.id}:version`, callbackData);
-    editMessages.howCanIHelp(ctx);
-});
 bot.action("gpt4o", (ctx) => {
     const callbackData = ctx.update.callback_query.data;
 
-    client.set(`user:${ctx.chat.id}:version`, callbackData);
-    editMessages.howCanIHelp(ctx);
+    client.set(`user:${ctx.chat.id}:ai`, callbackData);
+    editMessages.askYourQuestion(ctx);
 });
-bot.action("gpt4-turbo", (ctx) => {
-    const callbackData = ctx.update.callback_query.data;
 
-    client.set(`user:${ctx.chat.id}:version`, callbackData);
-    editMessages.howCanIHelp(ctx);
+bot.on("text", async (ctx) => {
+    const ai = await client.get(`user:${ctx.chat.id}:ai`);
+
+    // check if user data is not enough
+    if (!ai) {
+        return ctx.reply(
+            "قبل از پرسیدن سوال، ربات باید اطلاعات را دریافت کند \n\n برای اینکار بر روی /start کلیک کنید و مراحل را طی کنید"
+        );
+    }
+    // send looading message
+    ctx.reply("لطفا کمی صبور باشید...⏳");
+    const messageId = ctx.message.message_id + 1;
+
+    const text = ctx.text;
+    const mainApi = `https://one-api.ir/chatgpt/?token=${apiToken}&action=${ai}`;
+
+    if (ai === "copilot") {
+        const botResponse = await client.get(`user:${ctx.chat.id}:response`);
+
+        const api = mainApi.concat(`&q=${text}&tones=${botResponse}`);
+        const response = await axios.get(api);
+        ctx.deleteMessage(messageId);
+        return ctx.reply(
+            response.data.result[0].message,
+            Markup.inlineKeyboard([
+                [
+                    Markup.button.callback(
+                        "پایان مکالمه / تغییر هوش مصنوعی",
+                        "end-chat"
+                    ),
+                ],
+            ])
+        );
+    } else if (ai === "gpt4o") {
+        const api = mainApi.concat(`&q=${text}`);
+        const response = await axios.get(api);
+
+        ctx.deleteMessage(messageId);
+        return ctx.reply(
+            response.data.result[0],
+            Markup.inlineKeyboard([
+                [
+                    Markup.button.callback(
+                        "پایان مکالمه / تغییر هوش مصنوعی",
+                        "end-chat"
+                    ),
+                ],
+            ])
+        );
+    }
+});
+
+bot.action("end-chat", async (ctx) => {
+    ctx.reply("مکالمه شما با موفقیت پایان یافت ✅️");
+    await start(ctx, client);
 });
 
 bot.launch(() => {
